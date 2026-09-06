@@ -3,22 +3,21 @@
 namespace App\Services\busy;
 
 use App\Services\BusyApiService;
-use Attribute;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
-class BusyToDSAParty
+class BusyToDsaUnit
 {
-    private string $partiesTable = 'clients';
-
+    private string $unitsTable = 'unit_types';
     public function __construct(
         private BusyApiService $busyApiService
     ) {}
 
-    public function fetchParties(int $company_id): array
+    public function fetchUnits(int $company_id): array
     {
         $startedAt = microtime(true);
+
         $result = [
             'success' => false,
             'company_id' => $company_id,
@@ -32,20 +31,30 @@ class BusyToDSAParty
         ];
 
         try {
-            $response = $this->busyApiService->getCustomers();
-            Log::info("Party data",[$response]);
+            $response = $this->busyApiService->getUnits();
+            Log::channel('busy')->info('Unit data received', [
+                'response' => $response,
+            ]);
+
             if (!($response['success'] ?? false)) {
-                throw new \RuntimeException($response['description'] ?? 'BUSY party fetch failed.');
+                throw new \RuntimeException($response['description'] ?? 'BUSY unit fetch failed.');
             }
-            $parties = $this->parseBusyParties($response['body'] ?? '');
-            $result['fetched'] = count($parties);
-            $sync = $this->createOrUpdateDsaParties($parties, $company_id);
+
+            $units = $this->parseBusyUnits($response['body'] ?? '');
+            $result['fetched'] = count($units);
+            $sync = $this->createOrUpdateDsaUnits($units, $company_id);
             $result['inserted'] = $sync['inserted'];
             $result['updated'] = $sync['updated'];
             $result['skipped'] = $sync['skipped'];
-            $result['deactivated'] = $this->deactivateMissingParties($parties, $company_id);
+
+            $result['deactivated'] = $this->deactivateMissingUnits(
+                $units,
+                $company_id
+            );
+
             $result['success'] = true;
-            Log::channel('busy')->info('Party Pull Completed', [
+
+            Log::channel('busy')->info('Unit Pull Completed', [
                 'company_id' => $company_id,
                 'fetched' => $result['fetched'],
                 'inserted' => $result['inserted'],
@@ -53,111 +62,130 @@ class BusyToDSAParty
                 'skipped' => $result['skipped'],
                 'deactivated' => $result['deactivated'],
             ]);
+
             return $result;
         } catch (Throwable $e) {
+
             $result['error'] = $e->getMessage();
-            Log::channel('busy')->error('BUSY Party Sync Failed', [
+
+            Log::channel('busy')->error('BUSY Unit Sync Failed', [
                 'company_id' => $company_id,
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+
             return $result;
         } finally {
-            $result['duration_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
+
+            $result['duration_ms'] = (int) round(
+                (microtime(true) - $startedAt) * 1000
+            );
         }
     }
 
-    private function parseBusyParties(string $body): array
+    private function parseBusyUnits(string $body): array
     {
         $body = trim($body);
+
         if ($body === '') {
             return [];
         }
+
         libxml_use_internal_errors(true);
+
         $xml = simplexml_load_string($body);
+
         if ($xml === false) {
-            Log::channel('busy')->error('Failed to parse BUSY party XML', [
+            Log::channel('busy')->error('Failed to parse BUSY unit XML', [
                 'body' => $body,
                 'errors' => libxml_get_errors(),
             ]);
+
             libxml_clear_errors();
+
             return [];
         }
+
         $xml->registerXPathNamespace('z', '#RowsetSchema');
+
         $rows = $xml->xpath('//z:row') ?: [];
-        $parties = [];
+
+        $units = [];
+
         foreach ($rows as $row) {
+
             $attributes = $row->attributes();
-            $masterCode = trim((string) ($attributes['Code'] ?? ''));
-            $name = trim((string) ($attributes['Name'] ?? ''));
-            $mobile = trim((string) ($attributes['Name'] ?? ''));
-            $gst_no = trim((string) ($attributes['Name'] ?? ''));
-            $address1 = trim((string) ($attributes['Name'] ?? ''));
-            $address2 = trim((string) ($attributes['Name'] ?? ''));
-            $state = trim((string) ($attributes['Name'] ?? ''));
-            $status = ($attributes['DeactiveMaster'] ?? '') === 'True' ? 'Inactive' : 'Active';
+
+            $masterCode = trim(
+                (string) ($attributes['Code'] ?? '')
+            );
+
+            $name = trim(
+                (string) ($attributes['Name'] ?? '')
+            );
+
+            $symbol = trim(
+                (string) ($attributes['Symbol'] ?? $name)
+            );
+
+            $status = ($attributes['DeactiveMaster'] ?? '') === 'True'
+                ? 'Inactive'
+                : 'Active';
+
             if ($masterCode === '' || $name === '') {
                 continue;
             }
-            $parties[] = [
+
+            $units[] = [
                 'master_code' => $masterCode,
                 'name' => $name,
-                'mobile' => $mobile,
-                'gst_no' => $gst_no,
-                'address1' => $address1,
-                'address2' => $address2,
-                'state' => $state,
-                'status' => $status, 
+                'symbol' => $symbol,
+                'status' => $status,
             ];
         }
 
-        Log::channel('busy')->info('Parsed BUSY Parties', [
-            'count' => count($parties),
-            'parties' => $parties,
+        Log::channel('busy')->info('Parsed BUSY Units', [
+            'count' => count($units),
+            'units' => $units,
         ]);
 
-        return $parties;
+        return $units;
     }
 
-    private function createOrUpdateDsaParties(array $parties, int $company_id): array
-    {
+    private function createOrUpdateDsaUnits(array $units,int $company_id): array {
         $inserted = 0;
         $updated = 0;
         $skipped = 0;
-
-        foreach ($parties as $party) {
-            $busyPartyId = trim((string) ($party['code'] ?? ''));
-            $name = trim((string) ($party['name'] ?? ''));
-
-            if ($busyPartyId === '' || $name === '') {
+        foreach ($units as $unit) {
+            $busyUnitId = trim((string) ($unit['master_code'] ?? ''));
+            $name = trim((string) ($unit['name'] ?? ''));
+            if ($busyUnitId === '' || $name === '') {
                 $skipped++;
                 continue;
             }
 
             $data = [
                 'name' => $name,
-                'mobile' => $party['mobile'] ?? null,
-                'gst_no' => $party['gst_no'] ?? null,
-                'address1' => $party['address1'] ?? null,
-                'address2' => $party['address2'] ?? null,
-                'state' => $party['state'] ?? null,
+                'symbol' => $unit['symbol'] ?? $name,
+                'status' => $unit['status'] ?? 'Active',
                 'updated_at' => now(),
             ];
 
-            $existing = DB::table($this->partiesTable)
+            $existing = DB::table($this->unitsTable)
                 ->where('company_id', $company_id)
-                ->where('busyparty_id', $busyPartyId)
+                ->where('busyunit_id', $busyUnitId)
                 ->first();
 
             if ($existing) {
-                DB::table($this->partiesTable)
+                DB::table($this->unitsTable)
                     ->where('id', $existing->id)
                     ->update($data);
+
                 $updated++;
             } else {
-                DB::table($this->partiesTable)->insert([
+                DB::table($this->unitsTable)->insert([
                     'company_id' => $company_id,
-                    'busyparty_id' => $busyPartyId,
+                    'busyunit_id' => $busyUnitId,
                     ...$data,
                     'created_at' => now(),
                 ]);
@@ -172,9 +200,8 @@ class BusyToDSAParty
         ];
     }
 
-    private function deactivateMissingParties(array $parties, int $company_id): int
-    {
-        $busyPartyIds = collect($parties)
+    private function deactivateMissingUnits(array $units, int $company_id): int {
+        $busyUnitIds = collect($units)
             ->pluck('master_code')
             ->filter()
             ->map(fn($id) => trim((string) $id))
@@ -182,17 +209,14 @@ class BusyToDSAParty
             ->values()
             ->toArray();
 
-        if (empty($busyPartyIds)) {
+        if (empty($busyUnitIds)) {
             return 0;
         }
 
-        return DB::table($this->partiesTable)
+        return DB::table($this->unitsTable)
             ->where('company_id', $company_id)
-            ->whereNotNull('busyparty_id')
-            ->whereNotIn(
-                'busyparty_id',
-                $busyPartyIds
-            )
+            ->whereNotNull('busyunit_id')
+            ->whereNotIn('busyunit_id', $busyUnitIds)
             ->update([
                 'status' => 'Inactive',
                 'updated_at' => now(),

@@ -3,22 +3,22 @@
 namespace App\Services\busy;
 
 use App\Services\BusyApiService;
-use Attribute;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
-class BusyToDSAParty
+class BusyToDsaTaxes
 {
-    private string $partiesTable = 'clients';
+    private string $taxTable = 'tax_types';
 
     public function __construct(
         private BusyApiService $busyApiService
     ) {}
 
-    public function fetchParties(int $company_id): array
+    public function fetchTaxes(int $company_id): array
     {
         $startedAt = microtime(true);
+
         $result = [
             'success' => false,
             'company_id' => $company_id,
@@ -32,20 +32,19 @@ class BusyToDSAParty
         ];
 
         try {
-            $response = $this->busyApiService->getCustomers();
-            Log::info("Party data",[$response]);
+            $response = $this->busyApiService->getTaxes();
             if (!($response['success'] ?? false)) {
-                throw new \RuntimeException($response['description'] ?? 'BUSY party fetch failed.');
+                throw new \RuntimeException($response['description'] ?? 'BUSY tax fetch failed.');
             }
-            $parties = $this->parseBusyParties($response['body'] ?? '');
-            $result['fetched'] = count($parties);
-            $sync = $this->createOrUpdateDsaParties($parties, $company_id);
+            $taxes = $this->parseBusyTaxes($response['body'] ?? '');
+            $result['fetched'] = count($taxes);
+            $sync = $this->createOrUpdateDsaTaxes($taxes, $company_id);
             $result['inserted'] = $sync['inserted'];
             $result['updated'] = $sync['updated'];
             $result['skipped'] = $sync['skipped'];
-            $result['deactivated'] = $this->deactivateMissingParties($parties, $company_id);
+            $result['deactivated'] = $this->deactivateMissingTaxes($taxes, $company_id);
             $result['success'] = true;
-            Log::channel('busy')->info('Party Pull Completed', [
+            Log::channel('busy')->info('Tax Pull Completed', [
                 'company_id' => $company_id,
                 'fetched' => $result['fetched'],
                 'inserted' => $result['inserted'],
@@ -56,7 +55,7 @@ class BusyToDSAParty
             return $result;
         } catch (Throwable $e) {
             $result['error'] = $e->getMessage();
-            Log::channel('busy')->error('BUSY Party Sync Failed', [
+            Log::channel('busy')->error('BUSY Tax Sync Failed', [
                 'company_id' => $company_id,
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -67,100 +66,98 @@ class BusyToDSAParty
         }
     }
 
-    private function parseBusyParties(string $body): array
+    private function parseBusyTaxes(string $body): array
     {
         $body = trim($body);
+
         if ($body === '') {
             return [];
         }
         libxml_use_internal_errors(true);
         $xml = simplexml_load_string($body);
         if ($xml === false) {
-            Log::channel('busy')->error('Failed to parse BUSY party XML', [
-                'body' => $body,
-                'errors' => libxml_get_errors(),
-            ]);
+            Log::channel('busy')->error(
+                'Failed to parse BUSY tax XML',
+                [
+                    'errors' => libxml_get_errors(),
+                ]
+            );
             libxml_clear_errors();
             return [];
         }
-        $xml->registerXPathNamespace('z', '#RowsetSchema');
+
+        $xml->registerXPathNamespace('z','#RowsetSchema');
         $rows = $xml->xpath('//z:row') ?: [];
-        $parties = [];
+        $taxes = [];
         foreach ($rows as $row) {
             $attributes = $row->attributes();
             $masterCode = trim((string) ($attributes['Code'] ?? ''));
             $name = trim((string) ($attributes['Name'] ?? ''));
-            $mobile = trim((string) ($attributes['Name'] ?? ''));
-            $gst_no = trim((string) ($attributes['Name'] ?? ''));
-            $address1 = trim((string) ($attributes['Name'] ?? ''));
-            $address2 = trim((string) ($attributes['Name'] ?? ''));
-            $state = trim((string) ($attributes['Name'] ?? ''));
-            $status = ($attributes['DeactiveMaster'] ?? '') === 'True' ? 'Inactive' : 'Active';
+            $masterType = trim((string) ($attributes['MasterType'] ?? ''));
+            $parentGroup = trim((string) ($attributes['ParentGrp'] ?? ''));
+            $deactive = trim((string) ($attributes['DeactiveMaster'] ?? 'False'));
             if ($masterCode === '' || $name === '') {
                 continue;
             }
-            $parties[] = [
+            // Additional safety.
+            if ($masterType !== '25') {
+                continue;
+            }
+            $taxes[] = [
                 'master_code' => $masterCode,
                 'name' => $name,
-                'mobile' => $mobile,
-                'gst_no' => $gst_no,
-                'address1' => $address1,
-                'address2' => $address2,
-                'state' => $state,
-                'status' => $status, 
+                'percent' => $this->extractTaxPercent($name),
+                'parent_group' => $parentGroup,
+                'status' => $deactive === 'True' ? 'Inactive' : 'Active',
             ];
         }
 
-        Log::channel('busy')->info('Parsed BUSY Parties', [
-            'count' => count($parties),
-            'parties' => $parties,
+        Log::channel('busy')->info('Parsed BUSY Taxes', [
+            'count' => count($taxes),
+            'taxes' => $taxes,
         ]);
-
-        return $parties;
+        return $taxes;
     }
 
-    private function createOrUpdateDsaParties(array $parties, int $company_id): array
-    {
+    private function createOrUpdateDsaTaxes(array $taxes, int $company_id): array {
         $inserted = 0;
         $updated = 0;
         $skipped = 0;
-
-        foreach ($parties as $party) {
-            $busyPartyId = trim((string) ($party['code'] ?? ''));
-            $name = trim((string) ($party['name'] ?? ''));
-
-            if ($busyPartyId === '' || $name === '') {
+        foreach ($taxes as $tax) {
+            $busyTaxId = trim((string) ($tax['master_code'] ?? ''));
+            $name = trim((string) ($tax['name'] ?? ''));
+            if ($busyTaxId === '' || $name === '') {
                 $skipped++;
                 continue;
             }
 
             $data = [
                 'name' => $name,
-                'mobile' => $party['mobile'] ?? null,
-                'gst_no' => $party['gst_no'] ?? null,
-                'address1' => $party['address1'] ?? null,
-                'address2' => $party['address2'] ?? null,
-                'state' => $party['state'] ?? null,
+                'display_name' => $name,
+                'percent' => $tax['percent'] ?? 0,
+                'default_flag' => 0,
                 'updated_at' => now(),
             ];
 
-            $existing = DB::table($this->partiesTable)
+            $existing = DB::table($this->taxTable)
                 ->where('company_id', $company_id)
-                ->where('busyparty_id', $busyPartyId)
+                ->where('busytax_id', $busyTaxId)
                 ->first();
 
             if ($existing) {
-                DB::table($this->partiesTable)
+                DB::table($this->taxTable)
                     ->where('id', $existing->id)
                     ->update($data);
+
                 $updated++;
             } else {
-                DB::table($this->partiesTable)->insert([
+                DB::table($this->taxTable)->insert([
                     'company_id' => $company_id,
-                    'busyparty_id' => $busyPartyId,
+                    'busytax_id' => $busyTaxId,
                     ...$data,
                     'created_at' => now(),
                 ]);
+
                 $inserted++;
             }
         }
@@ -172,30 +169,39 @@ class BusyToDSAParty
         ];
     }
 
-    private function deactivateMissingParties(array $parties, int $company_id): int
-    {
-        $busyPartyIds = collect($parties)
+    private function deactivateMissingTaxes(array $taxes, int $company_id): int {
+        $busyTaxIds = collect($taxes)
             ->pluck('master_code')
             ->filter()
             ->map(fn($id) => trim((string) $id))
             ->unique()
             ->values()
             ->toArray();
-
-        if (empty($busyPartyIds)) {
+        if (empty($busyTaxIds)) {
             return 0;
         }
-
-        return DB::table($this->partiesTable)
+        /*
+         * tax_types may not have a status column.
+         * If your table has status, enable the update below.
+         */
+        return 0;
+        /*
+        return DB::table($this->taxTable)
             ->where('company_id', $company_id)
-            ->whereNotNull('busyparty_id')
-            ->whereNotIn(
-                'busyparty_id',
-                $busyPartyIds
-            )
+            ->whereNotNull('busytax_id')
+            ->whereNotIn('busytax_id', $busyTaxIds)
             ->update([
                 'status' => 'Inactive',
                 'updated_at' => now(),
             ]);
+        */
+    }
+
+    private function extractTaxPercent(string $name): float
+    {
+        if (preg_match('/(\d+(?:\.\d+)?)\s*%/', $name, $matches)) {
+            return (float) $matches[1];
+        }
+        return 0;
     }
 }

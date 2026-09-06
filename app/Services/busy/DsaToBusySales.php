@@ -81,63 +81,35 @@ class DsaToBusySales
 
             return $result;
         } finally {
-            $result['duration_ms'] = (int) round(
-                (microtime(true) - $startedAt) * 1000
-            );
+            $result['duration_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
         }
     }
 
     private function validateOrder(array $order): void
     {
         if (empty($order['order_no'])) {
-            throw new \InvalidArgumentException(
-                'Order number is required.'
-            );
+            throw new \InvalidArgumentException('Order number is required.');
         }
 
         if (empty($order['order_date'])) {
-            throw new \InvalidArgumentException(
-                'Order date is required.'
-            );
+            throw new \InvalidArgumentException('Order date is required.');
         }
 
         if (empty($order['client_name'])) {
-            throw new \InvalidArgumentException(
-                'Client name is required.'
-            );
+            throw new \InvalidArgumentException('Client name is required.');
         }
 
-        if (
-            !isset($order['orderproducts']) ||
-            !is_array($order['orderproducts']) ||
-            empty($order['orderproducts'])
-        ) {
-            throw new \InvalidArgumentException(
-                'At least one order product is required.'
-            );
+        if (!isset($order['orderproducts']) || !is_array($order['orderproducts']) || empty($order['orderproducts'])) {
+            throw new \InvalidArgumentException('At least one order product is required.');
         }
     }
 
     private function buildSaleXml(array $order): string
     {
-        $date = date(
-            'd-m-Y',
-            strtotime($order['order_date'])
-        );
-
-        $orderNo = $this->escapeXml(
-            $order['order_no']
-        );
-
-        $clientName = $this->escapeXml(
-            $order['client_name']
-        );
-
-        $itemEntries = $this->buildItemEntries(
-            $order['orderproducts'],
-            $date,
-            $orderNo
-        );
+        $date = date('d-m-Y', strtotime($order['order_date']));
+        $orderNo = $this->escapeXml($order['order_no']);
+        $clientName = $this->escapeXml($order['client_name']);
+        $itemEntries = $this->buildItemEntries($order['orderproducts'], $date, $orderNo);
 
         return <<<XML
         <Sale>
@@ -177,77 +149,34 @@ class DsaToBusySales
         XML;
     }
 
-    private function buildItemEntries(
-        array $products,
-        string $date,
-        string $orderNo
-    ): string {
+    private function buildItemEntries(array $products, string $date, string $orderNo): string {
         $entries = '';
-
         foreach ($products as $index => $product) {
-            $entries .= $this->buildItemEntry(
-                $product,
-                $index + 1,
-                $date,
-                $orderNo
-            );
+            $entries .= $this->buildItemEntry($product, $index + 1, $date, $orderNo);
         }
-
         return $entries;
     }
 
-    private function buildItemEntry(
-        array $product,
-        int $serialNumber,
-        string $date,
-        string $orderNo
-    ): string {
-        $itemName = trim(
-            (string) (
-                $product['product_name'] ??
-                ''
-            )
-        );
-
-        $unitName = trim(
-            (string) (
-                $product['unit_name'] ??
-                ''
-            )
-        );
-
-        $quantity = $this->parseNumber(
-            $product['quantity'] ?? 0
-        );
-
-        $rate = $this->parseNumber(
-            $product['rate'] ?? 0
-        );
-
-        $amount = $this->parseNumber(
-            $product['amount'] ?? null
-        );
-
+    private function buildItemEntry(array $product, int $serialNumber, string $date, string $orderNo): string {
+        $itemName = trim((string) ($product['product_name'] ?? ''));
+        $unitName = trim((string) ($product['unit_name'] ?? ''));
+        $quantity = $this->parseNumber($product['quantity'] ?? 0);
+        $rate = $this->parseNumber($product['rate'] ?? 0);
+        $amount = $this->parseNumber($product['amount'] ?? null);
         if ($amount === null) {
             $amount = $quantity * $rate;
         }
 
         if ($itemName === '') {
-            throw new \InvalidArgumentException(
-                "Product name is missing for item {$serialNumber}."
-            );
+            throw new \InvalidArgumentException("Product name is missing for item {$serialNumber}.");
         }
 
         if ($quantity <= 0) {
-            throw new \InvalidArgumentException(
-                "Quantity must be greater than zero for {$itemName}."
-            );
+            throw new \InvalidArgumentException("Quantity must be greater than zero for {$itemName}.");
         }
 
         if ($rate < 0) {
-            throw new \InvalidArgumentException(
-                "Rate cannot be negative for {$itemName}."
-            );
+            throw new \InvalidArgumentException("Rate cannot be negative for {$itemName}.");
         }
 
         $itemName = $this->escapeXml($itemName);
@@ -291,25 +220,16 @@ class DsaToBusySales
         }
 
         $value = str_replace(',', '', (string) $value);
-        $value = preg_replace(
-            '/[^0-9.\-]/',
-            '',
-            $value
-        );
+        $value = preg_replace('/[^0-9.\-]/', '', $value);
 
         if ($value === '' || $value === '-' || $value === '.') {
             return 0;
         }
-
         return (float) $value;
     }
 
     private function escapeXml($value): string
     {
-        return htmlspecialchars(
-            (string) $value,
-            ENT_XML1 | ENT_QUOTES,
-            'UTF-8'
-        );
+        return htmlspecialchars((string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
     }
 }

@@ -42,26 +42,19 @@ class DsaToBusyParty
 
         try {
             $this->validateClient($client);
-
             $xml = $this->buildAccountXml($client);
-
             Log::channel('busy')->info('BUSY Party Request', [
                 'client_id' => $client['id'] ?? null,
                 'client_name' => $client['name'] ?? null,
                 'xml_length' => strlen($xml),
             ]);
 
-            $response = $this->busyApiService->createMaster(
-                self::MASTER_TYPE,
-                $xml
-            );
-
+            $response = $this->busyApiService->createMaster(self::MASTER_TYPE,$xml);
             $result['status'] = $response['status'] ?? null;
             $result['result'] = $response['result'] ?? null;
             $result['description'] = $response['description'] ?? null;
             $result['body'] = $response['body'] ?? null;
             $result['success'] = $response['success'] ?? false;
-
             Log::channel('busy')->info('BUSY Party Response', [
                 'client_id' => $client['id'] ?? null,
                 'client_name' => $client['name'] ?? null,
@@ -70,94 +63,46 @@ class DsaToBusyParty
                 'result' => $result['result'],
                 'description' => $result['description'],
             ]);
-
             return $result;
         } catch (Throwable $e) {
             $result['error'] = $e->getMessage();
-
             Log::channel('busy')->error('BUSY Party Push Failed', [
                 'client_id' => $client['id'] ?? null,
                 'client_name' => $client['name'] ?? null,
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-
             return $result;
         } finally {
-            $result['duration_ms'] = (int) round(
-                (microtime(true) - $startedAt) * 1000
-            );
+            $result['duration_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
         }
     }
 
     private function validateClient(array $client): void
     {
         if (empty($client['id'])) {
-            throw new \InvalidArgumentException(
-                'Client ID is required.'
-            );
+            throw new \InvalidArgumentException('Client ID is required.');
         }
 
         if (empty(trim((string) ($client['name'] ?? '')))) {
-            throw new \InvalidArgumentException(
-                'Client name is required.'
-            );
+            throw new \InvalidArgumentException('Client name is required.');
         }
     }
 
     private function buildAccountXml(array $client): string
     {
-        $name = $this->escapeXml(
-            trim((string) $client['name'])
-        );
-
-        $address1 = $this->escapeXml(
-            $client['address_1'] ?? ''
-        );
-
-        $address2 = $this->escapeXml(
-            $client['address_2'] ?? ''
-        );
-
-        $mobile = $this->escapeXml(
-            $client['mobile']
-                ?? $client['phone']
-                ?? ''
-        );
-
-        $whatsapp = $this->escapeXml(
-            $client['phone']
-                ?? $client['mobile']
-                ?? ''
-        );
-
-        $pan = $this->escapeXml(
-            $client['pan'] ?? ''
-        );
-
-        $gst = $this->escapeXml(
-            $client['gst'] ?? $client['gst_no'] ?? ''
-        );
-
-        $state = $this->escapeXml(
-            $client['state'] ?? ''
-        );
-
-        $accNo = $this->escapeXml(
-            $client['acc_no'] ?? ''
-        );
-
-        $ifsc = $this->escapeXml(
-            $client['ifsc'] ?? ''
-        );
-
-        $bank = $this->escapeXml(
-            $client['bank'] ?? ''
-        );
-
-        $branch = $this->escapeXml(
-            $client['branch'] ?? ''
-        );
+        $name = $this->escapeXml(trim((string) $client['name']));
+        $address1 = $this->escapeXml($client['address_1'] ?? '');
+        $address2 = $this->escapeXml($client['address_2'] ?? '');
+        $mobile = $this->escapeXml($client['mobile'] ?? $client['phone'] ?? '');
+        $whatsapp = $this->escapeXml($client['phone'] ?? $client['mobile'] ?? '');
+        $pan = $this->escapeXml($client['pan'] ?? '');
+        $gst = $this->escapeXml($client['gst'] ?? $client['gst_no'] ?? '');
+        $state = $this->escapeXml($client['state'] ?? '');
+        $accNo = $this->escapeXml($client['acc_no'] ?? '');
+        $ifsc = $this->escapeXml($client['ifsc'] ?? '');
+        $bank = $this->escapeXml($client['bank'] ?? '');
+        $branch = $this->escapeXml($client['branch'] ?? '');
 
         $parentGroup = self::PARENT_GROUP;
         $billByBill = self::BILL_BY_BILL;
@@ -208,10 +153,6 @@ class DsaToBusyParty
 
     private function escapeXml($value): string
     {
-        return htmlspecialchars(
-            (string) $value,
-            ENT_XML1 | ENT_QUOTES,
-            'UTF-8'
-        );
+        return htmlspecialchars((string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
     }
 }

@@ -30,6 +30,16 @@ return new class extends Migration
         Schema::table('order', function (Blueprint $table) {
             $table->string('busyorder_id')->nullable()->after('id');
         });
+        Schema::table('unit_types', function (Blueprint $table) {
+            $table->string('busyunit_id')->nullable()->after('id');
+        });
+        Schema::table('tax_types', function (Blueprint $table) {
+            $table->string('busytax_id')->nullable()->after('id');
+        });
+
+        Schema::table('item_categories', function (Blueprint $table) {
+            $table->string('busyitemcategory_id')->nullable()->after('id');
+        });
     }
 
     /**
@@ -55,6 +65,16 @@ return new class extends Migration
 
         Schema::table('order', function (Blueprint $table) {
             $table->dropColumn('busyorder_id');
+        });
+
+        Schema::table('unit_types', function (Blueprint $table) {
+            $table->dropColumn('busyunit_id');
+        });
+        Schema::table('tax_types', function (Blueprint $table) {
+            $table->dropColumn('busytax_id');
+        });
+        Schema::table('item_categories', function (Blueprint $table) {
+            $table->dropColumn('busyitemcategory_id');
         });
     }
 };
