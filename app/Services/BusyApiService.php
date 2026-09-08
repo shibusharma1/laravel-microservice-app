@@ -125,7 +125,8 @@ class BusyApiService
      */
     public function getCustomers(): array
     {
-        $query = "SELECT * FROM MASTER1 WHERE MASTERTYPE = 5 AND PARENTGRP = 0";
+        $query = "SELECT TOP 5 * FROM TRAN2";
+        // $query = "SELECT * FROM TRAN1 WHERE VchType = 14";
         return $this->executeQuery($query);
     }
     // public function getCustomers(): array

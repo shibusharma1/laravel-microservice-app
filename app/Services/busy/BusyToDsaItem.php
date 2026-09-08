@@ -94,7 +94,7 @@ class BusyToDsaItem
             $attributes = $row->attributes();
             $masterCode = trim((string) ($attributes['Code'] ?? ''));
             $name = trim((string) ($attributes['Name'] ?? ''));
-            $unit = trim((string) ($attributes['UnitName'] ?? $attributes['Unit'] ?? ''));
+            $unit = trim((string) ($attributes['CM1'] ?? $attributes['CM2'] ?? ''));
             $salePrice = $attributes['D2'] ?? 0;
             $status = ($attributes['DeactiveMaster'] ?? '') === 'True' ? 'Inactive' : 'Active';
             if ($masterCode === '' || $name === '') {
@@ -123,6 +123,8 @@ class BusyToDsaItem
         $inserted = 0;
         $updated = 0;
         $skipped = 0;
+
+        Log::info("Unit test", [$items]);
 
         foreach ($items as $item) {
             $busyProductId = trim((string) ($item['master_code'] ?? ''));
@@ -175,6 +177,38 @@ class BusyToDsaItem
         ];
     }
 
+    // private function ensureUnitId(string $unitCode, int $company_id): ?int
+    // {
+    //     $unit = $this->normalizeName($unitCode);
+    //     if ($unit === '') {
+    //         return null;
+    //     }
+    //     $key = mb_strtolower($unit);
+    //     if (isset($this->unitCache[$company_id][$key])) {
+    //         return (int) $this->unitCache[$company_id][$key];
+    //     }
+    //     $existing = DB::table($this->unitsTable)
+    //         ->where('company_id', $company_id)
+    //         ->where(function ($query) use ($key) {
+    //             $query->whereRaw('LOWER(name) = ?', [$key])->orWhereRaw('LOWER(symbol) = ?', [$key]);
+    //         })->first();
+
+    //     if ($existing) {
+    //         return $this->unitCache[$company_id][$key] = (int) $existing->id;
+    //     }
+
+    //     $id = DB::table($this->unitsTable)->insertGetId([
+    //         'company_id' => $company_id,
+    //         'name' => 'unit'.$unit,
+    //         'symbol' => 'unit',
+    //         'busyunit_id' => $unit,
+    //         'status' => 'Active',
+    //         'created_at' => now(),
+    //         'updated_at' => now(),
+    //     ]);
+
+    //     return $this->unitCache[$company_id][$key] = (int) $id;
+    // }
     private function ensureUnitId(string $unitCode, int $company_id): ?int
     {
         $unit = $this->normalizeName($unitCode);
@@ -185,28 +219,35 @@ class BusyToDsaItem
         if (isset($this->unitCache[$company_id][$key])) {
             return (int) $this->unitCache[$company_id][$key];
         }
+        // First check by busyunit_id
         $existing = DB::table($this->unitsTable)
             ->where('company_id', $company_id)
-            ->where(function ($query) use ($key) {
-                $query->whereRaw('LOWER(name) = ?', [$key])->orWhereRaw('LOWER(symbol) = ?', [$key]);
-            })->first();
+            ->where('busyunit_id', $unit)
+            ->first();
+        if ($existing) {
+            return $this->unitCache[$company_id][$key] = (int) $existing->id;
+        }
+        // If not found, check by name
+        $existing = DB::table($this->unitsTable)
+            ->where('company_id', $company_id)
+            ->whereRaw('LOWER(name) = ?', [$key])
+            ->first();
 
         if ($existing) {
             return $this->unitCache[$company_id][$key] = (int) $existing->id;
         }
-
+        // Create new unit
         $id = DB::table($this->unitsTable)->insertGetId([
             'company_id' => $company_id,
-            'name' => 'unit'.$unit,
+            'name' => 'Unit',
             'symbol' => 'unit',
-            'busyunit_id' => $unit,
+            // 'busyunit_id' => $unit,
             'status' => 'Active',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
         return $this->unitCache[$company_id][$key] = (int) $id;
     }
-
     private function deactivateMissingProducts(array $items, int $company_id): int
     {
         $busyProductIds = collect($items)
